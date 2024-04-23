@@ -1,3 +1,5 @@
 mod cpu;
+mod opcodes;
 
-fn main() {}
+#[macro_use]
+extern crate bitflags;

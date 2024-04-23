@@ -1,8 +1,56 @@
 #![allow(unused)] // please leave me alone clippy
 
+use bitflags::Flags;
+
+use crate::opcodes::OPCODES_MAP;
+
+bitflags! {
+    /// # Status Register (P) http://wiki.nesdev.com/w/index.php/Status_flags
+    ///
+    ///  7 6 5 4 3 2 1 0
+    ///  N V _ B D I Z C
+    ///  | |   | | | | +--- Carry Flag
+    ///  | |   | | | +----- Zero Flag
+    ///  | |   | | +------- Interrupt Disable
+    ///  | |   | +--------- Decimal Mode (not used on NES)
+    ///  | |   +----------- Break Command
+    ///  | +--------------- Overflow Flag
+    ///  +----------------- Negative Flag
+    ///
+    #[derive(Debug)]
+    pub struct CpuFlags: u8 {
+        const CARRY             = 0b00000001;
+        const ZERO              = 0b00000010;
+        const INTERRUPT_DISABLE = 0b00000100;
+        const DECIMAL_MODE      = 0b00001000;
+        const BREAK             = 0b00010000;
+        const BREAK2            = 0b00100000;
+        const OVERFLOW          = 0b01000000;
+        const NEGATIVE           = 0b10000000;
+    }
+}
+
+const STACK: u16 = 0x0100;
+const STACK_RESET: u8 = 0xfd;
+
+#[derive(Copy, Clone, Debug)]
+#[allow(non_camel_case_types)]
+pub enum AddressingMode {
+    Immediate,
+    ZeroPage,
+    ZeroPage_X,
+    ZeroPage_Y,
+    Absolute,
+    Absolute_X,
+    Absolute_Y,
+    Indirect_X,
+    Indirect_Y,
+    NoneAddressing,
+}
+
 #[derive(Debug)]
 pub struct CPU {
-    pub status: u8,
+    pub status: CpuFlags,
     pub program_counter: u16,
     pub register_a: u8,
     pub register_x: u8,
@@ -13,7 +61,7 @@ pub struct CPU {
 impl Default for CPU {
     fn default() -> Self {
         Self {
-            status: 0,
+            status: CpuFlags::from_bits_truncate(0b100100),
             program_counter: 0,
             register_a: 0,
             register_x: 0,
@@ -64,6 +112,7 @@ impl CPU {
         self.mem_write_u16(0xFFFC, 0x8000);
     }
 
+    /// Load a value into register_a
     fn lda(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
@@ -82,6 +131,20 @@ impl CPU {
         self.update_zero_and_negative_flags(self.register_x);
     }
 
+    fn sta(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        self.mem_write(addr, self.register_a);
+    }
+
+    fn adc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+    }
+
+    fn add_to_register_a(&mut self, data: u8) {
+        let sum = self.register_a as u16 + data as u16 + (if self.status.)
+    }
+
     fn update_zero_and_negative_flags(&mut self, result: u8) {
         if result == 0 {
             self.status |= 0b0000_0010;
@@ -97,7 +160,10 @@ impl CPU {
     }
 
     fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
+        // See implementation details here
+        // https://www.nesdev.org/obelisk-6502-guide/addressing.html#IMM
         match mode {
+            // Load the value
             AddressingMode::Immediate => self.program_counter,
 
             AddressingMode::ZeroPage => self.mem_read(self.program_counter) as u16,
@@ -155,37 +221,29 @@ impl CPU {
             let code = self.mem_read(self.program_counter);
             self.program_counter += 1;
 
+            let opcode = OPCODES_MAP
+                .get(&code)
+                .ok_or(format!("Unsupported instruction {code}"))
+                .unwrap();
+
             match code {
                 // see https://www.nesdev.org/obelisk-6502-guide/reference.html#LDA
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
-                    self.lda(&match code {
-                        0xA9 => AddressingMode::Immediate,
-                        0xA5 => AddressingMode::ZeroPage,
-                        0xB5 => AddressingMode::ZeroPage_X,
-                        0xAD => AddressingMode::Absolute,
-                        0xBD => AddressingMode::Absolute_X,
-                        0xb9 => AddressingMode::Absolute_Y,
-                        0xA1 => AddressingMode::Indirect_X,
-                        0xB1 => AddressingMode::Indirect_Y,
-                        _ => AddressingMode::NoneAddressing,
-                    });
+                    self.lda(opcode.mode());
                     self.program_counter += 1;
                 }
 
-                // 0xA9 => {
-                //     self.lda(&AddressingMode::Immediate);
-                //     self.program_counter += 1;
-                // }
-                // 0xA5 => {
-                //     self.lda(&AddressingMode::ZeroPage);
-                //     self.program_counter += 1;
-                // }
-                // 0xB5 => {
-                //     self.lda(&AddressingMode::ZeroPage_X);
-                //     self.program_counter += 1;
-                // }
-                // 0xAD => {
-                // }
+                // see https://www.nesdev.org/obelisk-6502-guide/reference.html#STA
+                0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
+                    self.sta(opcode.mode());
+                    self.program_counter += 1;
+                }
+
+                0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+                    self.adc(opcode.mode());
+                    self.program_counter += 1;
+                }
+
                 0xAA => self.tax(),
                 0xE8 => self.inx(),
                 0x00 => return,
@@ -200,21 +258,6 @@ impl CPU {
 
         next
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-#[allow(non_camel_case_types)]
-pub enum AddressingMode {
-    Immediate,
-    ZeroPage,
-    ZeroPage_X,
-    ZeroPage_Y,
-    Absolute,
-    Absolute_X,
-    Absolute_Y,
-    Indirect_X,
-    Indirect_Y,
-    NoneAddressing,
 }
 
 #[cfg(test)]

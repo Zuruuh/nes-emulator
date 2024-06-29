@@ -19,14 +19,14 @@ bitflags! {
     ///
     #[derive(Debug)]
     pub struct CpuFlags: u8 {
-        const CARRY             = 0b00000001;
-        const ZERO              = 0b00000010;
-        const INTERRUPT_DISABLE = 0b00000100;
-        const DECIMAL_MODE      = 0b00001000;
-        const BREAK             = 0b00010000;
-        const BREAK2            = 0b00100000;
-        const OVERFLOW          = 0b01000000;
-        const NEGATIVE           = 0b10000000;
+        const CARRY             = 0b0000_0001;
+        const ZERO              = 0b0000_0010;
+        const INTERRUPT_DISABLE = 0b0000_0100;
+        const DECIMAL_MODE      = 0b0000_1000;
+        const BREAK             = 0b0001_0000;
+        const BREAK2            = 0b0010_0000;
+        const OVERFLOW          = 0b0100_0000;
+        const NEGATIVE          = 0b1000_0000;
     }
 }
 
@@ -94,7 +94,7 @@ impl CPU {
     }
 
     pub fn reset(&mut self) {
-        self.status = 0;
+        self.status = CpuFlags::from_bits_truncate(0b100100);
         self.register_x = 0;
         self.register_a = 0;
 
@@ -142,20 +142,45 @@ impl CPU {
     }
 
     fn add_to_register_a(&mut self, data: u8) {
-        let sum = self.register_a as u16 + data as u16 + (if self.status.)
+        // let sum = self.register_a as u16 + data as u16 + (if self.status.)
+        let sum = self.register_a as u16
+            + data as u16
+            + (if self.status.contains(CpuFlags::CARRY) {
+                1
+            } else {
+                0
+            }) as u16;
+
+        let carry = sum > 0xff;
+
+        if carry {
+            self.status.insert(CpuFlags::CARRY);
+        } else {
+            self.status.remove(CpuFlags::CARRY);
+        }
+
+        let result = sum as u8;
+
+        if (data ^ result) & (result ^ self.register_a) & 0x80 != 0 {
+            self.status.insert(CpuFlags::OVERFLOW);
+        } else {
+            self.status.remove(CpuFlags::OVERFLOW)
+        }
+
+        self.set_register_a(result);
     }
 
     fn update_zero_and_negative_flags(&mut self, result: u8) {
         if result == 0 {
-            self.status |= 0b0000_0010;
+            self.status.insert(CpuFlags::ZERO);
         } else {
-            self.status &= 0b1111_1101;
+            self.status.remove(CpuFlags::ZERO);
         }
 
         if result & 0b1000_0000 != 0 {
-            self.status |= 0b1000_0000;
+            self.status.insert(CpuFlags::NEGATIVE);
         } else {
-            self.status &= 0b0111_1111;
+            self.status.remove(CpuFlags::NEGATIVE);
         }
     }
 

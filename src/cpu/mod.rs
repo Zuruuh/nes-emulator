@@ -1,10 +1,10 @@
 #![allow(unused)] // please leave me alone clippy
 
-mod addressing_mode;
-mod flags;
-mod memory;
-mod opcode;
-mod stack;
+pub mod addressing_mode;
+pub mod flags;
+pub mod memory;
+pub mod opcode;
+pub mod stack;
 
 use enumflags2::BitFlags;
 
@@ -44,7 +44,15 @@ const RESET_ADDRESS: u16 = 0xFFFC;
 
 impl Cpu {
     pub fn run(&mut self) {
+        self.run_with_callback(|_| {});
+    }
+
+    pub fn run_with_callback<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(&mut Cpu),
+    {
         loop {
+            callback(self);
             let opcode = self.mem_read(self.program_counter);
             self.program_counter += 1;
 
@@ -156,7 +164,7 @@ impl Cpu {
         }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.register_a = 0;
         self.register_x = 0;
         self.status = BitFlags::default();
@@ -164,13 +172,13 @@ impl Cpu {
         self.program_counter = self.mem_read_u16(RESET_ADDRESS);
     }
 
-    fn load_and_run(&mut self, program: Vec<u8>) {
+    pub fn load_and_run(&mut self, program: Vec<u8>) {
         self.load(program);
         self.reset();
         self.run();
     }
 
-    fn load(&mut self, program: Vec<u8>) {
+    pub fn load(&mut self, program: Vec<u8>) {
         self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
         self.mem_write_u16(RESET_ADDRESS, 0x8000);
     }

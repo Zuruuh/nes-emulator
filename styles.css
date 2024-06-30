@@ -1,0 +1,19 @@
+#container {
+  margin: 0;
+  padding-top: 10vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  background-color: #eee;
+}
+
+#screen {
+  width: 320px;
+  height: 320px;
+  background-color: #000;
+}

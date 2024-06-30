@@ -13,6 +13,7 @@ use flags::CpuFlags;
 use memory::Memory;
 use opcode::OPCODES_MAP;
 use stack::Stack;
+use tracing::instrument;
 
 #[derive(Debug)]
 pub struct Cpu {
@@ -41,127 +42,143 @@ impl Default for Cpu {
 }
 
 const RESET_ADDRESS: u16 = 0xFFFC;
+const GAME_START_ADDRESS: u16 = 0x0600;
+
+pub enum RunResult {
+    Running,
+    Done,
+}
 
 impl Cpu {
     pub fn run(&mut self) {
-        self.run_with_callback(|_| {});
+        loop {
+            match self.run_cycle_with_callback(|_| {}) {
+                RunResult::Running => {}
+                RunResult::Done => break,
+            }
+        }
     }
 
-    pub fn run_with_callback<F>(&mut self, mut callback: F)
+    pub fn run_cycle_with_callback<F>(&mut self, mut callback: F) -> RunResult
     where
         F: FnMut(&mut Cpu),
     {
-        loop {
-            callback(self);
-            let opcode = self.mem_read(self.program_counter);
-            self.program_counter += 1;
+        callback(self);
+        let opcode = self.mem_read(self.program_counter);
+        self.program_counter += 1;
 
-            let opcode = (*&OPCODES_MAP)
-                .get(&opcode)
-                .copied()
-                .expect(&format!("Illegal opcode instruction provided {opcode}"));
+        let opcode = (*&OPCODES_MAP).get(&opcode).copied().expect(&format!(
+            "Illegal opcode instruction provided {:X?}",
+            opcode
+        ));
 
-            match opcode.repr {
-                "ADC" => self.adc(opcode.mode),
-                "AND" => self.and(opcode.mode),
-                "ASL" => self.asl(opcode.mode),
-                "BCC" => self.branch(!self.status.contains(CpuFlags::CarryBit)),
-                "BCS" => self.branch(self.status.contains(CpuFlags::CarryBit)),
-                "BEQ" => self.branch(self.status.contains(CpuFlags::Zero)),
-                "BIT" => self.bit(opcode.mode),
-                "BMI" => self.branch(self.status.contains(CpuFlags::Negative)),
-                "BNE" => self.branch(!self.status.contains(CpuFlags::Zero)),
-                "BPL" => self.branch(!self.status.contains(CpuFlags::Negative)),
-                "BRK" => return,
-                "BVC" => self.branch(!self.status.contains(CpuFlags::Overflow)),
-                "BVS" => self.branch(self.status.contains(CpuFlags::Overflow)),
-                "CLC" => self.status.remove(CpuFlags::CarryBit),
-                "CLD" => self.status.remove(CpuFlags::DecimalMode),
-                "CLI" => self.status.remove(CpuFlags::DisableInterrupts),
-                "CLV" => self.status.remove(CpuFlags::Overflow),
-                "CMP" => self.compare(opcode.mode, self.register_a),
-                "CPX" => self.compare(opcode.mode, self.register_x),
-                "CPY" => self.compare(opcode.mode, self.register_y),
-                "DEC" => self.dec(),
-                "DEX" => self.dex(),
-                "DEY" => self.dey(),
-                "EOR" => self.eor(opcode.mode),
-                "INC" => self.inc(),
-                "INX" => self.inx(),
-                "INY" => self.iny(),
-                "JMP" => match opcode.code {
-                    0x6c => {
-                        let mem_address = self.mem_read_u16(self.program_counter);
-                        // let indirect_ref = self.mem_read_u16(mem_address);
-                        // 6502 bug mode with with page boundary:
-                        // if address $3000 contains $40, $30FF contains $80, and $3100 contains $50,
-                        // the result of JMP ($30FF) will be a transfer of control to $4080 rather than $5080 as you intended
-                        // i.e. the 6502 took the low byte of the address from $30FF and the high byte from $3000
-                        //
-                        // See https://www.nesdev.org/obelisk-6502-guide/reference.html#JMP for ref
+        log::debug!("Executing instruction {:?}", &opcode);
 
-                        let indirect_ref = if mem_address & 0x00FF == 0x00FF {
-                            let lo = self.mem_read(mem_address);
-                            let hi = self.mem_read(mem_address & 0xFF00);
-                            (hi as u16) << 8 | (lo as u16)
-                        } else {
-                            self.mem_read_u16(mem_address)
-                        };
+        match opcode.repr {
+            "ADC" => self.adc(opcode.mode),
+            "AND" => self.and(opcode.mode),
+            "ASL" => self.asl(opcode.mode),
+            "BCC" => self.branch(!self.status.contains(CpuFlags::CarryBit)),
+            "BCS" => self.branch(self.status.contains(CpuFlags::CarryBit)),
+            "BEQ" => self.branch(self.status.contains(CpuFlags::Zero)),
+            "BIT" => self.bit(opcode.mode),
+            "BMI" => self.branch(self.status.contains(CpuFlags::Negative)),
+            "BNE" => self.branch(!self.status.contains(CpuFlags::Zero)),
+            "BPL" => self.branch(!self.status.contains(CpuFlags::Negative)),
+            "BRK" => return RunResult::Done,
+            "BVC" => self.branch(!self.status.contains(CpuFlags::Overflow)),
+            "BVS" => self.branch(self.status.contains(CpuFlags::Overflow)),
+            "CLC" => self.status.remove(CpuFlags::CarryBit),
+            "CLD" => self.status.remove(CpuFlags::DecimalMode),
+            "CLI" => self.status.remove(CpuFlags::DisableInterrupts),
+            "CLV" => self.status.remove(CpuFlags::Overflow),
+            "CMP" => self.compare(opcode.mode, self.register_a),
+            "CPX" => self.compare(opcode.mode, self.register_x),
+            "CPY" => self.compare(opcode.mode, self.register_y),
+            "DEC" => self.dec(),
+            "DEX" => self.dex(),
+            "DEY" => self.dey(),
+            "EOR" => self.eor(opcode.mode),
+            "INC" => self.inc(),
+            "INX" => self.inx(),
+            "INY" => self.iny(),
+            "JMP" => match opcode.code {
+                0x6c => {
+                    let mem_address = self.mem_read_u16(self.program_counter);
+                    // let indirect_ref = self.mem_read_u16(mem_address);
+                    // 6502 bug mode with with page boundary:
+                    // if address $3000 contains $40, $30FF contains $80, and $3100 contains $50,
+                    // the result of JMP ($30FF) will be a transfer of control to $4080 rather than $5080 as you intended
+                    // i.e. the 6502 took the low byte of the address from $30FF and the high byte from $3000
+                    //
+                    // See https://www.nesdev.org/obelisk-6502-guide/reference.html#JMP for ref
 
-                        self.program_counter = indirect_ref;
-                    }
-                    _ => {
-                        let addr = self.mem_read_u16(self.program_counter);
-                        self.program_counter = addr;
-                    }
-                },
-                "JSR" => {
-                    self.stack_push_u16(self.program_counter + 2 - 1);
-                    let target = self.mem_read_u16(self.program_counter);
-                    self.program_counter = target;
+                    let indirect_ref = if mem_address & 0x00FF == 0x00FF {
+                        let lo = self.mem_read(mem_address);
+                        let hi = self.mem_read(mem_address & 0xFF00);
+                        (hi as u16) << 8 | (lo as u16)
+                    } else {
+                        self.mem_read_u16(mem_address)
+                    };
+
+                    self.program_counter = indirect_ref;
                 }
-                "LDA" => self.lda(opcode.mode),
-                "LDX" => self.ldx(opcode.mode),
-                "LDY" => self.ldy(opcode.mode),
-                "LSR" => match opcode.code {
-                    0x4A => self.lsr_accumulator(),
-                    _ => self.lsr(opcode.mode),
-                },
-                "NOP" => {}
-                "ORA" => self.ora(opcode.mode),
-                "PHA" => self.stack_push(self.register_a),
-                "PHP" => self.php(),
-                "PLA" => self.pla(),
-                "PLP" => self.plp(),
-                "ROL" => match opcode.code {
-                    0x2A => self.rol_accumulator(),
-                    _ => self.rol(opcode.mode),
-                },
-                "ROR" => match opcode.code {
-                    0x6A => self.ror_accumulator(),
-                    _ => self.ror(opcode.mode),
-                },
-                "RTI" => self.rti(),
-                "RTS" => self.program_counter = self.stack_pop_u16() + 1,
-                "SBC" => self.sbc(opcode.mode),
-                "SEC" => self.status.insert(CpuFlags::CarryBit),
-                "SED" => self.status.insert(CpuFlags::DecimalMode),
-                "SEI" => self.status.insert(CpuFlags::DisableInterrupts),
-                "STA" => self.sta(opcode.mode),
-                "STX" => self.stx(opcode.mode),
-                "STY" => self.sty(opcode.mode),
-                "TAX" => self.tax(),
-                "TAY" => self.tay(),
-                "TSX" => self.tsx(),
-                "TXA" => self.txa(),
-                "TXS" => self.txs(),
-                "TYA" => self.tya(),
-
-                _ => unreachable!("Invalid byte {}", opcode.repr),
+                _ => {
+                    let addr = self.mem_read_u16(self.program_counter);
+                    self.program_counter = addr;
+                }
+            },
+            "JSR" => {
+                self.stack_push_u16(self.program_counter + 2 - 1);
+                let target = self.mem_read_u16(self.program_counter);
+                self.program_counter = target;
             }
+            "LDA" => self.lda(opcode.mode),
+            "LDX" => self.ldx(opcode.mode),
+            "LDY" => self.ldy(opcode.mode),
+            "LSR" => match opcode.code {
+                0x4A => self.lsr_accumulator(),
+                _ => self.lsr(opcode.mode),
+            },
+            "NOP" => {}
+            "ORA" => self.ora(opcode.mode),
+            "PHA" => self.stack_push(self.register_a),
+            "PHP" => self.php(),
+            "PLA" => self.pla(),
+            "PLP" => self.plp(),
+            "ROL" => match opcode.code {
+                0x2A => self.rol_accumulator(),
+                _ => self.rol(opcode.mode),
+            },
+            "ROR" => match opcode.code {
+                0x6A => self.ror_accumulator(),
+                _ => self.ror(opcode.mode),
+            },
+            "RTI" => self.rti(),
+            "RTS" => self.program_counter = self.stack_pop_u16() + 1,
+            "SBC" => self.sbc(opcode.mode),
+            "SEC" => self.status.insert(CpuFlags::CarryBit),
+            "SED" => self.status.insert(CpuFlags::DecimalMode),
+            "SEI" => self.status.insert(CpuFlags::DisableInterrupts),
+            "STA" => self.sta(opcode.mode),
+            "STX" => self.stx(opcode.mode),
+            "STY" => self.sty(opcode.mode),
+            "TAX" => self.tax(),
+            "TAY" => self.tay(),
+            "TSX" => self.tsx(),
+            "TXA" => self.txa(),
+            "TXS" => self.txs(),
+            "TYA" => self.tya(),
 
-            self.program_counter += opcode.len as u16 - 1;
+            _ => unreachable!(
+                "Invalid byte {:X?} - Dumping memory: {:?}",
+                opcode.repr, self.memory
+            ),
         }
+
+        self.program_counter += opcode.len as u16 - 1;
+
+        RunResult::Running
     }
 
     pub fn reset(&mut self) {
@@ -179,16 +196,19 @@ impl Cpu {
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
-        self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(RESET_ADDRESS, 0x8000);
+        self.memory[(GAME_START_ADDRESS as usize)..(GAME_START_ADDRESS as usize + program.len())]
+            .copy_from_slice(&program[..]);
+        self.mem_write_u16(RESET_ADDRESS, GAME_START_ADDRESS);
     }
 
+    #[instrument]
     fn adc(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
 
         self.add_to_register_a(self.mem_read(addr));
     }
 
+    #[instrument]
     fn asl(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let mut data = self.mem_read(addr);
@@ -199,6 +219,7 @@ impl Cpu {
         self.update_zero_and_negative_flags(data);
     }
 
+    #[instrument]
     fn and(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let data = self.mem_read(addr);
@@ -206,6 +227,7 @@ impl Cpu {
         self.set_register_a(data & self.register_a);
     }
 
+    #[instrument]
     fn branch(&mut self, condition: bool) {
         if !condition {
             return;
@@ -220,6 +242,7 @@ impl Cpu {
         self.program_counter = jump_addr;
     }
 
+    #[instrument]
     fn bit(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let data = self.mem_read(addr);
@@ -236,6 +259,7 @@ impl Cpu {
         );
     }
 
+    #[instrument]
     fn compare(&mut self, mode: AddressingMode, compare_with: u8) {
         let addr = self.get_operand_address(mode);
         let data = self.mem_read(addr);
@@ -245,42 +269,50 @@ impl Cpu {
         self.update_zero_and_negative_flags(compare_with.wrapping_sub(data));
     }
 
+    #[instrument]
     fn dec(&mut self) {
         self.register_a = self.register_a.wrapping_sub(1);
         self.update_zero_and_negative_flags(self.register_a);
     }
 
+    #[instrument]
     fn dex(&mut self) {
         self.register_x = self.register_x.wrapping_sub(1);
         self.update_zero_and_negative_flags(self.register_x);
     }
 
+    #[instrument]
     fn dey(&mut self) {
         self.register_y = self.register_y.wrapping_sub(1);
         self.update_zero_and_negative_flags(self.register_y);
     }
 
+    #[instrument]
     fn eor(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let data = self.mem_read(addr);
         self.set_register_a(data ^ self.register_a);
     }
 
+    #[instrument]
     fn inc(&mut self) {
         self.register_a = self.register_a.wrapping_add(1);
         self.update_zero_and_negative_flags(self.register_a);
     }
 
+    #[instrument]
     fn inx(&mut self) {
         self.register_x = self.register_x.wrapping_add(1);
         self.update_zero_and_negative_flags(self.register_x);
     }
 
+    #[instrument]
     fn iny(&mut self) {
         self.register_y = self.register_y.wrapping_add(1);
         self.update_zero_and_negative_flags(self.register_y);
     }
 
+    #[instrument]
     fn lda(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
@@ -288,6 +320,7 @@ impl Cpu {
         self.set_register_a(value);
     }
 
+    #[instrument]
     fn ldx(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
@@ -296,6 +329,7 @@ impl Cpu {
         self.update_zero_and_negative_flags(self.register_x);
     }
 
+    #[instrument]
     fn ldy(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         self.register_x = self.mem_read(addr);
@@ -303,6 +337,7 @@ impl Cpu {
         self.update_zero_and_negative_flags(self.register_y);
     }
 
+    #[instrument]
     fn lsr_accumulator(&mut self) {
         let mut data = self.register_a;
         self.status.set(CpuFlags::CarryBit, data & 1 == 1);
@@ -310,6 +345,7 @@ impl Cpu {
         self.set_register_a(data);
     }
 
+    #[instrument]
     fn lsr(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let mut data = self.mem_read(addr);
@@ -320,12 +356,14 @@ impl Cpu {
         self.update_zero_and_negative_flags(data);
     }
 
+    #[instrument]
     fn ora(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let data = self.mem_read(addr);
         self.set_register_a(data | self.register_a);
     }
 
+    #[instrument]
     fn php(&mut self) {
         let mut status = self.status.clone();
         status.insert(CpuFlags::Break);
@@ -334,17 +372,20 @@ impl Cpu {
         self.stack_push(status.bits());
     }
 
+    #[instrument]
     fn pla(&mut self) {
         let value = self.stack_pop();
         self.set_register_a(value);
     }
 
+    #[instrument]
     fn plp(&mut self) {
         self.pop_status_from_stack();
         self.status.remove(CpuFlags::Break);
         self.status.insert(CpuFlags::_Unused);
     }
 
+    #[instrument]
     fn rol_accumulator(&mut self) {
         let mut data = self.register_a;
         let old_carry = self.status.contains(CpuFlags::CarryBit);
@@ -358,6 +399,7 @@ impl Cpu {
         self.set_register_a(data);
     }
 
+    #[instrument]
     fn rol(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let mut data = self.mem_read(addr);
@@ -373,6 +415,7 @@ impl Cpu {
         self.update_zero_and_negative_flags(data);
     }
 
+    #[instrument]
     fn ror_accumulator(&mut self) {
         let mut data = self.register_a;
         let old_carry = self.status.contains(CpuFlags::CarryBit);
@@ -386,6 +429,7 @@ impl Cpu {
         self.set_register_a(data);
     }
 
+    #[instrument]
     fn ror(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let mut data = self.mem_read(addr);
@@ -401,6 +445,7 @@ impl Cpu {
         self.update_zero_and_negative_flags(data);
     }
 
+    #[instrument]
     fn rti(&mut self) {
         self.pop_status_from_stack();
         self.status.remove(CpuFlags::Break);
@@ -409,6 +454,7 @@ impl Cpu {
         self.program_counter = self.stack_pop_u16();
     }
 
+    #[instrument]
     fn sbc(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         let data = self.mem_read(addr);
@@ -416,50 +462,60 @@ impl Cpu {
         self.add_to_register_a((data as i8).wrapping_neg().wrapping_sub(1) as u8)
     }
 
+    #[instrument]
     fn sta(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         self.mem_write(addr, self.register_a);
     }
 
+    #[instrument]
     fn stx(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         self.mem_write(addr, self.register_x);
     }
 
+    #[instrument]
     fn sty(&mut self, mode: AddressingMode) {
         let addr = self.get_operand_address(mode);
         self.mem_write(addr, self.register_y);
     }
 
+    #[instrument]
     fn tax(&mut self) {
         self.register_x = self.register_a;
         self.update_zero_and_negative_flags(self.register_x);
     }
 
+    #[instrument]
     fn tay(&mut self) {
         self.register_y = self.register_a;
         self.update_zero_and_negative_flags(self.register_y);
     }
 
+    #[instrument]
     fn tsx(&mut self) {
         self.register_x = self.stack_pointer;
         self.update_zero_and_negative_flags(self.register_x);
     }
 
+    #[instrument]
     fn txa(&mut self) {
         self.register_a = self.register_x;
         self.update_zero_and_negative_flags(self.register_a);
     }
 
+    #[instrument]
     fn txs(&mut self) {
         self.stack_pointer = self.register_x;
     }
 
+    #[instrument]
     fn tya(&mut self) {
         self.register_a = self.register_y;
         self.update_zero_and_negative_flags(self.register_a);
     }
 
+    #[instrument]
     fn update_zero_and_negative_flags(&mut self, result: u8) {
         self.status.set(CpuFlags::Zero, result == 0);
 
@@ -468,6 +524,7 @@ impl Cpu {
             result & CpuFlags::Negative.into_bitflags().bits() != 0,
         );
     }
+
     fn set_register_a(&mut self, value: u8) {
         self.register_a = value;
         self.update_zero_and_negative_flags(self.register_a);
@@ -562,5 +619,15 @@ mod test {
         cpu.run();
 
         assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_branch_timings() {
+        let mut cpu = Cpu::default();
+        let bytes = include_bytes!("../../branch_timing_tests/1.Branch_Basics.nes").to_vec();
+        cpu.load(bytes);
+        cpu.reset();
+
+        cpu.run();
     }
 }

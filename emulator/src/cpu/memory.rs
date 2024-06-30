@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use super::{addressing_mode::AddressingMode, Cpu};
 
 pub trait Memory {
@@ -19,12 +21,16 @@ pub trait Memory {
 }
 
 impl Memory for Cpu {
+    #[instrument]
     fn mem_read(&self, addr: u16) -> u8 {
+        log::debug!("Reading memory address {:X?}", addr);
         self.memory[addr as usize]
     }
 
+    #[instrument]
     fn mem_write(&mut self, addr: u16, data: u8) {
         self.memory[addr as usize] = data;
+        log::trace!("Writing {:X?} at {:X?}", data, addr);
     }
 
     fn get_operand_address(&self, mode: AddressingMode) -> u16 {

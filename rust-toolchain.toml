@@ -1,0 +1,4 @@
+[toolchain]
+channel = "beta"
+date = "2024-06-22"
+targets = ["wasm32-unknown-unknown", "x86_64-unknown-linux-gnu"]

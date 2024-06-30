@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::addressing_mode::AddressingMode;
 
+#[derive(Debug)]
 pub struct OpCode {
     pub code: u8,
     pub repr: &'static str,

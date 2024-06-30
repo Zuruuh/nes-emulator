@@ -1,5 +1,4 @@
-#[derive(Debug)]
-#[allow(non_camel_case_types)]
+#[derive(Debug, Copy, Clone)]
 pub enum AddressingMode {
     Immediate,
     ZeroPage,

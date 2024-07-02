@@ -1,11 +1,10 @@
-use std::time::Duration;
-
 use emulator::{memory::Memory, Cpu, RunResult, LAST_PRESSED_BUTTON_ADDRESS};
 use leptos::{
     component, create_effect, create_node_ref, create_signal, ev::KeyboardEvent, html,
-    leptos_dom::helpers::IntervalHandle, set_interval_with_handle, view, IntoView, SignalGet,
-    SignalSet, SignalUpdate, SignalWith,
+    leptos_dom::logging::console_warn, view, IntoView, Signal, SignalGet, SignalGetUntracked,
+    SignalSet, SignalUpdate, SignalWith, SignalWithUntracked,
 };
+use leptos_use::use_raf_fn;
 use rand::Rng;
 use wasm_bindgen::prelude::*;
 use web_sys::CanvasRenderingContext2d;
@@ -19,6 +18,8 @@ enum GameState {
     Running,
 }
 
+type Screen = [(u8, u8, u8); 32 * 32];
+
 #[component]
 pub fn App() -> impl IntoView {
     // Game state
@@ -29,13 +30,13 @@ pub fn App() -> impl IntoView {
         cpu.reset();
         cpu
     });
-    let (screen, set_screen) = create_signal([0u8; 32 * 3 * 32]);
+    let (screen, set_screen) = create_signal::<Screen>([(0, 0, 0); 32 * 32]);
     let running = move || matches!(game_state.get(), GameState::Running);
     let paused = move || matches!(game_state.get(), GameState::Paused);
 
     // Canvas
     let canvas_ref = create_node_ref::<html::Canvas>();
-    let canvas_ctx = move || {
+    let canvas_ctx = Signal::derive(move || {
         let canvas = match canvas_ref.get() {
             Some(canvas) => canvas,
             _ => {
@@ -51,17 +52,18 @@ pub fn App() -> impl IntoView {
             .expect(&CANVAS_MESSAGE);
 
         Some(ctx)
-    };
+    });
 
-    let (game_loop, set_game_loop) = create_signal::<Option<IntervalHandle>>(None);
+    let (operations, set_operations) = create_signal(Vec::<(usize, (u8, u8, u8))>::new());
 
     let run_next_cycle = move || {
         set_cpu.update(|cpu| cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16)));
 
         cpu.with(|cpu| {
-            set_screen.update(|screen| {
-                if read_screen_state(cpu, screen) {
-                    log::debug!("{:?}", screen);
+            screen.with(|screen| {
+                let operations = read_screen_state(cpu, screen);
+                if !operations.is_empty() {
+                    set_operations.set(operations);
                 }
             });
         });
@@ -72,18 +74,39 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    create_effect(move |_| match game_state.get() {
-        GameState::Paused => {
-            if let Some(interval) = game_loop.get() {
-                interval.clear();
-            }
-        }
-        GameState::Running => {
-            let interval = set_interval_with_handle(run_next_cycle, Duration::from_nanos(70_000))
-                .expect("Could not create game loop ?");
+    create_effect(move |_| {
+        let operations = operations.get();
+        if !operations.is_empty() {
+            set_screen.update(|screen| {
+                for (index, color) in operations {
+                    screen[index] = color;
+                    let canvas_ctx = canvas_ctx.get_untracked().unwrap();
+                    canvas_ctx.set_fill_style(&JsValue::from_str(&format!(
+                        "#{:X?}{:X?}{:X?}",
+                        color.0, color.1, color.2
+                    )));
 
-            set_game_loop.set(Some(interval));
+                    canvas_ctx.fill_rect(
+                        index as f64 % 32.0,
+                        (index as f64 / 32.0).floor(),
+                        1.0,
+                        1.0,
+                    );
+                }
+            });
         }
+    });
+
+    // create_effect(move |_| screen);
+
+    let game_loop = use_raf_fn(move |_| run_next_cycle());
+    (game_loop.pause)();
+
+    create_effect(move |_| {
+        match game_state.get() {
+            GameState::Paused => (game_loop.pause)(),
+            GameState::Running => (game_loop.resume)(),
+        };
     });
 
     let on_keypress = move |e: KeyboardEvent| {
@@ -114,22 +137,29 @@ pub fn App() -> impl IntoView {
     }
 }
 
-// TODO: plug this into the canvas
-fn read_screen_state(cpu: &Cpu, frame: &mut [u8; 32 * 3 * 32]) -> bool {
-    let mut frame_idx = 0;
-    let mut update = false;
-    for i in 0x0200..0x600 {
-        let color_idx = cpu.mem_read(i as u16);
-        let (b1, b2, b3) = color(color_idx);
-        if frame[frame_idx] != b1 || frame[frame_idx + 1] != b2 || frame[frame_idx + 2] != b3 {
-            frame[frame_idx] = b1;
-            frame[frame_idx + 1] = b2;
-            frame[frame_idx + 2] = b3;
-            update = true;
-        }
-        frame_idx += 3;
-    }
-    update
+fn read_screen_state(cpu: &Cpu, screen: &Screen) -> Vec<(usize, (u8, u8, u8))> {
+    // Our display is located between these addresses in memory
+    (0x0200..0x0600)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(frame_index, memory_address)| {
+            let color_idx = cpu.mem_read(memory_address as u16);
+            // aX is the color currently displayed in the canvas
+            // bX is the color that was set in memory and that should now be displayed
+            let (a1, a2, a3) = screen[frame_index];
+            let (b1, b2, b3) = color(color_idx);
+
+            console_warn(&format!(
+                "Comparing #{:X?}{:X?}{:X?} with #{:X?}{:X?}{:X?} ",
+                a1, a2, a3, b1, b2, b3
+            ));
+            if a1 != b1 || a2 != b2 || a3 != b3 {
+                return Some((frame_index, (b1, b2, b3)));
+            }
+
+            None
+        })
+        .collect()
 }
 
 /// Map a NES color id to an rgb sequence

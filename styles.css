@@ -1,3 +1,9 @@
+body {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
 #container {
   margin: 0;
   padding-top: 10vh;
@@ -13,9 +19,16 @@
 }
 
 #screen {
-  width: 320px;
-  height: 320px;
+  width: 32px;
+  height: 32px;
+  transform: scale(10);
+  transform-origin: bottom;
   background-color: #000;
+  outline: none;
+
+  &:focus {
+    border: .01px solid red;
+  }
 }
 
 #controls {

@@ -1,21 +1,35 @@
 {
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
+    cargo-tauri-src = {
+      url = "github:tauri-apps/tauri?ref=tauri-v2.0.0-beta.22";
+      flake = false;
+    };
   };
 
-  # outputs = { self, nixpkgs }: {
-  #
-  #   packages.x86_64-linux.hello = nixpkgs.legacyPackages.x86_64-linux.hello;
-  #
-  #   packages.x86_64-linux.default = self.packages.x86_64-linux.hello;
-  #
-  # };
-
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, cargo-tauri-src, }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
+        cargo-tauri = pkgs.rustPlatform.buildRustPackage rec {
+          pname = "cargo-tauri";
+          version = "2.0.0-beta.22";
+          src = cargo-tauri-src;
+
+          # Manually specify the sourceRoot since this crate depends on other crates in the workspace. Relevant info at
+          # https://discourse.nixos.org/t/difficulty-using-buildrustpackage-with-a-src-containing-multiple-cargo-workspaces/10202
+          sourceRoot = "source/tooling/cli";
+
+          cargoHash = "sha256-JIpQCVxK7+NMCP4rzlynA5yly1Eib9L6cIx8Q7vP7y8=";
+
+          buildInputs = [ pkgs.openssl ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs;
+            [ glibc libsoup cairo gtk3 webkitgtk ])
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk.frameworks;
+            [ CoreServices Security SystemConfiguration ]);
+          nativeBuildInputs = [ pkgs.pkg-config ];
+        };
 
         libraries = with pkgs;[
           webkitgtk_4_1
@@ -42,8 +56,10 @@
           libsoup
           webkitgtk_4_1
           librsvg
-          bun
           rustup
+          cargo-tauri
+          trunk # serve web front without running a window
+          hexyl # pretty hex viewer
         ];
       in
       {

@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "cargo-tauri-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1717001931,
+        "narHash": "sha256-7+NOMjKyAmnqGD3bmCdpWjrmmxsaQvIkr4jRXi+7ucw=",
+        "owner": "tauri-apps",
+        "repo": "tauri",
+        "rev": "a0a76cea2ffa2d619756c8d2453c0d494869aadc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "tauri-apps",
+        "ref": "tauri-v2.0.0-beta.22",
+        "repo": "tauri",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -20,22 +37,23 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1719506693,
-        "narHash": "sha256-C8e9S7RzshSdHB7L+v9I51af1gDM5unhJ2xO1ywxNH8=",
+        "lastModified": 1719838683,
+        "narHash": "sha256-Zw9rQjHz1ilNIimEXFeVa1ERNRBF8DoXDhLAZq5B4pE=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "b2852eb9365c6de48ffb0dc2c9562591f652242a",
+        "rev": "d032c1a6dfad4eedec7e35e91986becc699d7d69",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
-        "ref": "nixos-unstable",
+        "ref": "nixos-24.05",
         "repo": "nixpkgs",
         "type": "github"
       }
     },
     "root": {
       "inputs": {
+        "cargo-tauri-src": "cargo-tauri-src",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }

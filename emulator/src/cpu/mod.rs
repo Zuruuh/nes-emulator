@@ -50,7 +50,7 @@ pub enum RunResult {
 }
 
 impl Cpu {
-    pub fn run(&mut self) {
+    pub fn run_single_cycle(&mut self) {
         loop {
             match self.run_cycle_with_callback(|_| {}) {
                 RunResult::Running => {}
@@ -192,7 +192,7 @@ impl Cpu {
     pub fn load_and_run(&mut self, program: Vec<u8>) {
         self.load(program);
         self.reset();
-        self.run();
+        self.run_single_cycle();
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
@@ -597,7 +597,7 @@ mod test {
         cpu.load(vec![0xAA, 0x00]);
         cpu.reset();
         cpu.register_a = 10;
-        cpu.run();
+        cpu.run_single_cycle();
 
         assert_eq!(cpu.register_x, 10)
     }
@@ -616,7 +616,7 @@ mod test {
         cpu.load(vec![0xE8, 0xE8, 0x00]);
         cpu.reset();
         cpu.register_x = u8::MAX;
-        cpu.run();
+        cpu.run_single_cycle();
 
         assert_eq!(cpu.register_x, 1)
     }
@@ -628,6 +628,6 @@ mod test {
         cpu.load(bytes);
         cpu.reset();
 
-        cpu.run();
+        cpu.run_single_cycle();
     }
 }

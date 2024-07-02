@@ -1,14 +1,14 @@
 use std::{
-    sync::{Arc, RwLock},
+    sync::{Arc, OnceLock, RwLock},
     time::Duration,
 };
 
 use emulator::{memory::Memory, Cpu, LAST_PRESSED_BUTTON_ADDRESS};
 use leptos::{
-    component, create_effect, create_node_ref, create_signal, html, set_interval_with_handle, view,
-    IntoView, SignalGet, SignalSet,
+    component, create_effect, create_node_ref, create_signal, ev::KeyboardEvent, html,
+    leptos_dom::helpers::IntervalHandle, set_interval_with_handle, view, IntoView, SignalGet,
+    SignalSet,
 };
-use once_cell::sync::OnceCell;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -25,8 +25,9 @@ struct GreetArgs<'a> {
     name: &'a str,
 }
 
-static CPU: OnceCell<Arc<RwLock<Cpu>>> = OnceCell::new();
-static SCREEN: OnceCell<Arc<RwLock<[u8; 32 * 3 * 32]>>> = OnceCell::new();
+static CPU: OnceLock<Arc<RwLock<Cpu>>> = OnceLock::new();
+static SCREEN: OnceLock<Arc<RwLock<[u8; 32 * 3 * 32]>>> = OnceLock::new();
+const CANVAS_MESSAGE: &'static str = "Could not acquire canvas 2d context";
 
 #[derive(Default, Copy, Clone, PartialEq)]
 enum GameState {
@@ -37,67 +38,65 @@ enum GameState {
 
 #[component]
 pub fn App() -> impl IntoView {
-    let canvas_ref = create_node_ref::<html::Canvas>();
+    // Game state
     let (game_state, set_game_state) = create_signal(GameState::default());
     let running = move || matches!(game_state.get(), GameState::Running);
     let paused = move || matches!(game_state.get(), GameState::Paused);
 
-    CPU.set({
-        let mut cpu = emulator::Cpu::default();
-        cpu.load(emulator::SNAKE.to_vec());
-        cpu.reset();
-        Arc::new(RwLock::new(cpu))
-    })
-    .unwrap();
-
-    SCREEN
-        .set(Arc::new(RwLock::new([0 as u8; 32 * 3 * 32])))
-        .unwrap();
-
-    create_effect(move |_| {
+    // Canvas
+    let canvas_ref = create_node_ref::<html::Canvas>();
+    let canvas_ctx = move || {
         let canvas = match canvas_ref.get() {
             Some(canvas) => canvas,
             _ => {
-                return;
+                return None;
             }
         };
 
         let ctx = canvas
             .get_context("2d")
-            .expect("Could not acquire canvas 2d context")
-            .unwrap();
+            .expect(&CANVAS_MESSAGE)
+            .expect(&CANVAS_MESSAGE)
+            .dyn_into::<CanvasRenderingContext2d>()
+            .expect(&CANVAS_MESSAGE);
 
-        let ctx = ctx.dyn_into::<CanvasRenderingContext2d>().unwrap();
-        for i in 0..32u8 {
-            for j in 0..32u8 {
-                let color = format!("#00{:x?}{:x?}", i, j);
-                ctx.set_fill_style(&JsValue::from_str(&color));
-                ctx.fill_rect(i as f64 * 10.0, j as f64 * 10.0, 10.0, 10.0);
+        Some(ctx)
+    };
+
+    initialize_global_state();
+
+    let (game_loop, set_game_loop) = create_signal::<Option<IntervalHandle>>(None);
+
+    let run_next_cycle = move || {
+        let cpu_lock = CPU.get().unwrap().clone();
+        let mut cpu = cpu_lock.write().unwrap();
+
+        let screen_lock = SCREEN.get().unwrap().clone();
+        let mut screen = screen_lock.write().unwrap();
+
+        cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16));
+
+        if read_screen_state(&cpu, &mut screen) {
+            log::debug!("{:?}", screen);
+        }
+
+        cpu.run_single_cycle();
+    };
+    create_effect(move |_| match game_state.get() {
+        GameState::Paused => {
+            if let Some(interval) = game_loop.get() {
+                interval.clear();
             }
         }
-        ctx.fill_rect(1.0, 1.0, 1.0, 1.0);
+        GameState::Running => {
+            let interval = set_interval_with_handle(run_next_cycle, Duration::from_nanos(70_000))
+                .expect("Could not create game loop ?");
+
+            set_game_loop.set(Some(interval));
+        }
     });
 
-    // let _interval = set_interval_with_handle(
-    //     move || {
-    //         let cpu_lock = CPU.get().unwrap().clone();
-    //         let mut cpu = cpu_lock.write().unwrap();
-    //
-    //         let screen_lock = SCREEN.get().unwrap().clone();
-    //         let mut screen = screen_lock.write().unwrap();
-    //
-    //         cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16));
-    //
-    //         if read_screen_state(&cpu, &mut screen) {
-    //             log::debug!("{:?}", screen);
-    //         }
-    //
-    //         cpu.run();
-    //     },
-    //     Duration::from_nanos(70_000),
-    // );
-
-    let on_keypress = move |e: leptos::ev::KeyboardEvent| {
+    let on_keypress = move |e: KeyboardEvent| {
         let keycode: u8 = match e.key().to_lowercase().as_str() {
             "w" => 0x77,
             "s" => 0x73,
@@ -122,7 +121,7 @@ pub fn App() -> impl IntoView {
             <section id="controls">
                 <button disabled={running} on:click={move |_| set_game_state.set(GameState::Running)}>Start</button>
                 <button disabled={paused} on:click={move |_| set_game_state.set(GameState::Paused)}>Stop</button>
-                <button>{"Advance 1 frame"}</button>
+                <button disabled={running} on:click={move|_| run_next_cycle()}>{"Advance 1 frame"}</button>
             </section>
         </main>
     }
@@ -146,6 +145,7 @@ fn read_screen_state(cpu: &Cpu, frame: &mut [u8; 32 * 3 * 32]) -> bool {
     update
 }
 
+/// Map a NES color id to an rgb sequence
 fn color(byte: u8) -> (u8, u8, u8) {
     match byte {
         0 => (0, 0, 0),
@@ -158,4 +158,20 @@ fn color(byte: u8) -> (u8, u8, u8) {
         7 | 14 => (255, 255, 0),
         _ => (0, 255, 255),
     }
+}
+
+fn initialize_global_state() {
+    // technically this should never return an error since we mount the component only once but idk
+    CPU.set({
+        let mut cpu = emulator::Cpu::default();
+        cpu.load(emulator::SNAKE.to_vec());
+        cpu.reset();
+        Arc::new(RwLock::new(cpu))
+    })
+    .unwrap();
+
+    // Same as above
+    SCREEN
+        .set(Arc::new(RwLock::new([0 as u8; 32 * 3 * 32])))
+        .unwrap();
 }

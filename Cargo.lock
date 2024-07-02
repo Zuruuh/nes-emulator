@@ -2247,7 +2247,6 @@ dependencies = [
  "js-sys",
  "leptos",
  "log",
- "once_cell",
  "rand 0.8.5",
  "serde",
  "serde-wasm-bindgen",

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use super::addressing_mode::AddressingMode;
 
-#[derive(Debug)]
 pub struct OpCode {
     pub code: u8,
     pub repr: &'static str,
@@ -20,6 +19,12 @@ impl OpCode {
             cycles,
             mode,
         }
+    }
+}
+
+impl std::fmt::Debug for OpCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{} (0x{:X?})]: {:?}", self.repr, self.code, self.mode)
     }
 }
 

@@ -6,16 +6,19 @@ pub mod memory;
 pub mod opcode;
 pub mod stack;
 
+use core::num;
+use std::fmt::Debug;
+
 use enumflags2::BitFlags;
 
 use addressing_mode::AddressingMode;
 use flags::CpuFlags;
+use log::info;
 use memory::Memory;
 use opcode::OPCODES_MAP;
 use stack::Stack;
-use tracing::instrument;
+use tracing::{field, instrument};
 
-#[derive(Debug)]
 pub struct Cpu {
     // accumulator
     pub register_a: u8,
@@ -49,26 +52,47 @@ pub enum RunResult {
     Done,
 }
 
+impl Debug for Cpu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cpu")
+            .field("a", &self.register_a)
+            .field("x", &self.register_x)
+            .field("y", &self.register_y)
+            .field("status", &self.status)
+            .field("program_counter", &self.program_counter)
+            .field("stack_pointer", &self.stack_pointer)
+            .field("memory", &"[...]")
+            .finish()
+    }
+}
+
 impl Cpu {
-    pub fn run_single_cycle(&mut self) {
+    pub fn run_single_cycle(&mut self) -> RunResult {
+        self.run_single_cycle_with_callback(|_| {})
+    }
+
+    pub fn run(&mut self) {
         loop {
-            match self.run_cycle_with_callback(|_| {}) {
+            match self.run_single_cycle_with_callback(|_| {}) {
                 RunResult::Running => {}
                 RunResult::Done => break,
             }
         }
     }
 
-    pub fn run_cycle_with_callback<F>(&mut self, mut callback: F) -> RunResult
+    pub fn run_single_cycle_with_callback<F>(&mut self, mut callback: F) -> RunResult
     where
         F: FnMut(&mut Cpu),
     {
         callback(self);
+        log::debug!("{:?}", &self);
+        log::debug!("Reading next opcode.");
         let opcode = self.mem_read(self.program_counter);
         self.program_counter += 1;
+        let program_counter_state = self.program_counter;
 
         let opcode = (*&OPCODES_MAP).get(&opcode).copied().expect(&format!(
-            "Illegal opcode instruction provided {:X?}",
+            "Illegal opcode instruction provided 0x{:X?}",
             opcode
         ));
 
@@ -176,23 +200,27 @@ impl Cpu {
             ),
         }
 
-        self.program_counter += opcode.len as u16 - 1;
+        if program_counter_state == self.program_counter {
+            self.program_counter += opcode.len as u16 - 1;
+        }
 
         RunResult::Running
     }
 
     pub fn reset(&mut self) {
+        info!("Resetting CPU state.");
         self.register_a = 0;
         self.register_x = 0;
         self.status = BitFlags::default();
 
         self.program_counter = self.mem_read_u16(RESET_ADDRESS);
+        info!("Reset done.");
     }
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
         self.load(program);
         self.reset();
-        self.run_single_cycle();
+        self.run();
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
@@ -597,7 +625,7 @@ mod test {
         cpu.load(vec![0xAA, 0x00]);
         cpu.reset();
         cpu.register_a = 10;
-        cpu.run_single_cycle();
+        cpu.run();
 
         assert_eq!(cpu.register_x, 10)
     }
@@ -616,18 +644,29 @@ mod test {
         cpu.load(vec![0xE8, 0xE8, 0x00]);
         cpu.reset();
         cpu.register_x = u8::MAX;
-        cpu.run_single_cycle();
+        cpu.run();
 
         assert_eq!(cpu.register_x, 1)
     }
 
     #[test]
-    fn test_branch_timings() {
+    fn test_snake() {
         let mut cpu = Cpu::default();
-        let bytes = include_bytes!("../../branch_timing_tests/1.Branch_Basics.nes").to_vec();
-        cpu.load(bytes);
-        cpu.reset();
+        cpu.load_and_run(super::super::SNAKE.to_vec());
+    }
 
-        cpu.run_single_cycle();
+    // #[test]
+    // fn test_branch_timings() {
+    //     let mut cpu = Cpu::default();
+    //     let bytes = include_bytes!("../../branch_timing_tests/1.Branch_Basics.nes").to_vec();
+    //     cpu.load(bytes);
+    //     cpu.reset();
+    //
+    //     cpu.run_single_cycle();
+    // }
+
+    #[ctor::ctor]
+    fn init() {
+        simple_logger::init();
     }
 }

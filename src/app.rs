@@ -3,27 +3,15 @@ use std::{
     time::Duration,
 };
 
-use emulator::{memory::Memory, Cpu, LAST_PRESSED_BUTTON_ADDRESS};
+use emulator::{memory::Memory, Cpu, RunResult, LAST_PRESSED_BUTTON_ADDRESS};
 use leptos::{
     component, create_effect, create_node_ref, create_signal, ev::KeyboardEvent, html,
     leptos_dom::helpers::IntervalHandle, set_interval_with_handle, view, IntoView, SignalGet,
     SignalSet,
 };
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use web_sys::CanvasRenderingContext2d;
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
-    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
-}
-
-#[derive(Serialize, Deserialize)]
-struct GreetArgs<'a> {
-    name: &'a str,
-}
 
 static CPU: OnceLock<Arc<RwLock<Cpu>>> = OnceLock::new();
 static SCREEN: OnceLock<Arc<RwLock<[u8; 32 * 3 * 32]>>> = OnceLock::new();
@@ -80,8 +68,12 @@ pub fn App() -> impl IntoView {
             log::debug!("{:?}", screen);
         }
 
-        cpu.run_single_cycle();
+        match cpu.run_single_cycle() {
+            RunResult::Running => {}
+            RunResult::Done => set_game_state.set(GameState::Paused),
+        }
     };
+
     create_effect(move |_| match game_state.get() {
         GameState::Paused => {
             if let Some(interval) = game_loop.get() {

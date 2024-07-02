@@ -9,6 +9,7 @@ TODO list:
 - find some more resources on the CPU emulator
 - add debugging tools (something to view/dump memory changes in real time ? slow
   down emulation ? or read opcodes step by step ?) bcz it's a pain rn
+- add save states
 
 ## Requirements
 

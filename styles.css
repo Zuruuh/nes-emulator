@@ -17,3 +17,9 @@
   height: 320px;
   background-color: #000;
 }
+
+#controls {
+  display: flex;
+  gap: .5rem;
+  margin-top: 1rem;
+}

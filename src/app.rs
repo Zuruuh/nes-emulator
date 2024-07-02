@@ -1,15 +1,15 @@
 use std::{
-    sync::{Arc, RwLock, RwLockWriteGuard},
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
-use emulator::{memory::Memory, Cpu, RunResult, LAST_PRESSED_BUTTON_ADDRESS};
+use emulator::{memory::Memory, Cpu, LAST_PRESSED_BUTTON_ADDRESS};
 use leptos::{
-    component, create_effect, create_node_ref, html, set_interval, set_interval_with_handle, view,
-    IntoView,
+    component, create_effect, create_node_ref, create_signal, html, set_interval_with_handle, view,
+    IntoView, SignalGet, SignalSet,
 };
 use once_cell::sync::OnceCell;
-use rand::{rngs::ThreadRng, Rng};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use web_sys::CanvasRenderingContext2d;
@@ -28,9 +28,19 @@ struct GreetArgs<'a> {
 static CPU: OnceCell<Arc<RwLock<Cpu>>> = OnceCell::new();
 static SCREEN: OnceCell<Arc<RwLock<[u8; 32 * 3 * 32]>>> = OnceCell::new();
 
+#[derive(Default, Copy, Clone, PartialEq)]
+enum GameState {
+    #[default]
+    Paused,
+    Running,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let canvas_ref = create_node_ref::<html::Canvas>();
+    let (game_state, set_game_state) = create_signal(GameState::default());
+    let running = move || matches!(game_state.get(), GameState::Running);
+    let paused = move || matches!(game_state.get(), GameState::Paused);
 
     CPU.set({
         let mut cpu = emulator::Cpu::default();
@@ -61,7 +71,6 @@ pub fn App() -> impl IntoView {
         for i in 0..32u8 {
             for j in 0..32u8 {
                 let color = format!("#00{:x?}{:x?}", i, j);
-                // log::debug!("Priting color {color} at {i}:{j}");
                 ctx.set_fill_style(&JsValue::from_str(&color));
                 ctx.fill_rect(i as f64 * 10.0, j as f64 * 10.0, 10.0, 10.0);
             }
@@ -69,27 +78,24 @@ pub fn App() -> impl IntoView {
         ctx.fill_rect(1.0, 1.0, 1.0, 1.0);
     });
 
-    let _interval = set_interval_with_handle(
-        move || {
-            let cpu_lock = CPU.get().unwrap().clone();
-            let mut cpu = cpu_lock.write().unwrap();
-
-            let screen_lock = SCREEN.get().unwrap().clone();
-            let mut screen = screen_lock.write().unwrap();
-
-            cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16));
-
-            if read_screen_state(&cpu, &mut screen) {
-                log::debug!("{:?}", screen);
-            }
-
-            match cpu.run() {
-                RunResult::Done => panic!("DONE RUNNING"),
-                _ => {}
-            }
-        },
-        Duration::from_nanos(70_000),
-    );
+    // let _interval = set_interval_with_handle(
+    //     move || {
+    //         let cpu_lock = CPU.get().unwrap().clone();
+    //         let mut cpu = cpu_lock.write().unwrap();
+    //
+    //         let screen_lock = SCREEN.get().unwrap().clone();
+    //         let mut screen = screen_lock.write().unwrap();
+    //
+    //         cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16));
+    //
+    //         if read_screen_state(&cpu, &mut screen) {
+    //             log::debug!("{:?}", screen);
+    //         }
+    //
+    //         cpu.run();
+    //     },
+    //     Duration::from_nanos(70_000),
+    // );
 
     let on_keypress = move |e: leptos::ev::KeyboardEvent| {
         let keycode: u8 = match e.key().to_lowercase().as_str() {
@@ -113,10 +119,16 @@ pub fn App() -> impl IntoView {
     view! {
         <main id="container">
             <canvas autofocus _ref={canvas_ref} id="screen" on:keypress={on_keypress} tabindex="0" />
+            <section id="controls">
+                <button disabled={running} on:click={move |_| set_game_state.set(GameState::Running)}>Start</button>
+                <button disabled={paused} on:click={move |_| set_game_state.set(GameState::Paused)}>Stop</button>
+                <button>{"Advance 1 frame"}</button>
+            </section>
         </main>
     }
 }
 
+// TODO: plug this into the canvas
 fn read_screen_state(cpu: &Cpu, frame: &mut [u8; 32 * 3 * 32]) -> bool {
     let mut frame_idx = 0;
     let mut update = false;

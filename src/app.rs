@@ -1,20 +1,15 @@
-use std::{
-    sync::{Arc, OnceLock, RwLock},
-    time::Duration,
-};
+use std::time::Duration;
 
 use emulator::{memory::Memory, Cpu, RunResult, LAST_PRESSED_BUTTON_ADDRESS};
 use leptos::{
     component, create_effect, create_node_ref, create_signal, ev::KeyboardEvent, html,
     leptos_dom::helpers::IntervalHandle, set_interval_with_handle, view, IntoView, SignalGet,
-    SignalSet,
+    SignalSet, SignalUpdate, SignalWith,
 };
 use rand::Rng;
 use wasm_bindgen::prelude::*;
 use web_sys::CanvasRenderingContext2d;
 
-static CPU: OnceLock<Arc<RwLock<Cpu>>> = OnceLock::new();
-static SCREEN: OnceLock<Arc<RwLock<[u8; 32 * 3 * 32]>>> = OnceLock::new();
 const CANVAS_MESSAGE: &'static str = "Could not acquire canvas 2d context";
 
 #[derive(Default, Copy, Clone, PartialEq)]
@@ -28,6 +23,13 @@ enum GameState {
 pub fn App() -> impl IntoView {
     // Game state
     let (game_state, set_game_state) = create_signal(GameState::default());
+    let (cpu, set_cpu) = create_signal({
+        let mut cpu = emulator::Cpu::default();
+        cpu.load(emulator::SNAKE.to_vec());
+        cpu.reset();
+        cpu
+    });
+    let (screen, set_screen) = create_signal([0u8; 32 * 3 * 32]);
     let running = move || matches!(game_state.get(), GameState::Running);
     let paused = move || matches!(game_state.get(), GameState::Paused);
 
@@ -51,27 +53,23 @@ pub fn App() -> impl IntoView {
         Some(ctx)
     };
 
-    initialize_global_state();
-
     let (game_loop, set_game_loop) = create_signal::<Option<IntervalHandle>>(None);
 
     let run_next_cycle = move || {
-        let cpu_lock = CPU.get().unwrap().clone();
-        let mut cpu = cpu_lock.write().unwrap();
+        set_cpu.update(|cpu| cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16)));
 
-        let screen_lock = SCREEN.get().unwrap().clone();
-        let mut screen = screen_lock.write().unwrap();
+        cpu.with(|cpu| {
+            set_screen.update(|screen| {
+                if read_screen_state(cpu, screen) {
+                    log::debug!("{:?}", screen);
+                }
+            });
+        });
 
-        cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16));
-
-        if read_screen_state(&cpu, &mut screen) {
-            log::debug!("{:?}", screen);
-        }
-
-        match cpu.run_single_cycle() {
+        set_cpu.update(|cpu| match cpu.run_single_cycle() {
             RunResult::Running => {}
             RunResult::Done => set_game_state.set(GameState::Paused),
-        }
+        });
     };
 
     create_effect(move |_| match game_state.get() {
@@ -97,13 +95,10 @@ pub fn App() -> impl IntoView {
             _ => return,
         };
         e.prevent_default();
-        let cpu_lock = CPU.get().unwrap().clone();
-        let mut cpu = cpu_lock.write().unwrap();
-
-        cpu.mem_write(LAST_PRESSED_BUTTON_ADDRESS.into(), keycode);
+        set_cpu.update(|cpu| cpu.mem_write(LAST_PRESSED_BUTTON_ADDRESS.into(), keycode));
         log::debug!(
             "Last pressed button: 0x{:X?}",
-            cpu.mem_read(LAST_PRESSED_BUTTON_ADDRESS.into())
+            cpu.with(|cpu| cpu.mem_read(LAST_PRESSED_BUTTON_ADDRESS.into()))
         );
     };
 
@@ -150,20 +145,4 @@ fn color(byte: u8) -> (u8, u8, u8) {
         7 | 14 => (255, 255, 0),
         _ => (0, 255, 255),
     }
-}
-
-fn initialize_global_state() {
-    // technically this should never return an error since we mount the component only once but idk
-    CPU.set({
-        let mut cpu = emulator::Cpu::default();
-        cpu.load(emulator::SNAKE.to_vec());
-        cpu.reset();
-        Arc::new(RwLock::new(cpu))
-    })
-    .unwrap();
-
-    // Same as above
-    SCREEN
-        .set(Arc::new(RwLock::new([0 as u8; 32 * 3 * 32])))
-        .unwrap();
 }

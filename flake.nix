@@ -13,17 +13,13 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
+        # Building cargo-tauri manually since v^2 isn't available on nixpkgs
         cargo-tauri = pkgs.rustPlatform.buildRustPackage rec {
           pname = "cargo-tauri";
           version = "2.0.0-beta.22";
           src = cargo-tauri-src;
-
-          # Manually specify the sourceRoot since this crate depends on other crates in the workspace. Relevant info at
-          # https://discourse.nixos.org/t/difficulty-using-buildrustpackage-with-a-src-containing-multiple-cargo-workspaces/10202
           sourceRoot = "source/tooling/cli";
-
           cargoHash = "sha256-JIpQCVxK7+NMCP4rzlynA5yly1Eib9L6cIx8Q7vP7y8=";
-
           buildInputs = [ pkgs.openssl ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs;
             [ glibc libsoup cairo gtk3 webkitgtk ])
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk.frameworks;

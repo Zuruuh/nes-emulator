@@ -1,13 +1,13 @@
 use emulator::{memory::Memory, Cpu, RunResult, LAST_PRESSED_BUTTON_ADDRESS};
 use leptos::{
     component, create_effect, create_node_ref, create_signal, ev::KeyboardEvent, html,
-    leptos_dom::logging::console_warn, view, IntoView, Signal, SignalGet, SignalGetUntracked,
-    SignalSet, SignalUpdate, SignalWith, SignalWithUntracked,
+    leptos_dom::logging::console_warn, view, IntoView, Signal, SignalGet, SignalSet, SignalUpdate,
+    SignalWith,
 };
 use leptos_use::use_raf_fn;
 use rand::Rng;
-use wasm_bindgen::prelude::*;
-use web_sys::CanvasRenderingContext2d;
+use wasm_bindgen::{prelude::*, Clamped};
+use web_sys::{CanvasRenderingContext2d, ImageData};
 
 const CANVAS_MESSAGE: &'static str = "Could not acquire canvas 2d context";
 
@@ -17,8 +17,6 @@ enum GameState {
     Paused,
     Running,
 }
-
-type Screen = [(u8, u8, u8); 32 * 32];
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -30,7 +28,6 @@ pub fn App() -> impl IntoView {
         cpu.reset();
         cpu
     });
-    let (screen, set_screen) = create_signal::<Screen>([(0, 0, 0); 32 * 32]);
     let running = move || matches!(game_state.get(), GameState::Running);
     let paused = move || matches!(game_state.get(), GameState::Paused);
 
@@ -54,18 +51,20 @@ pub fn App() -> impl IntoView {
         Some(ctx)
     });
 
-    let (operations, set_operations) = create_signal(Vec::<(usize, (u8, u8, u8))>::new());
-
     let run_next_cycle = move || {
         set_cpu.update(|cpu| cpu.mem_write(0xfe, rand::thread_rng().gen_range(1..16)));
 
         cpu.with(|cpu| {
-            screen.with(|screen| {
-                let operations = read_screen_state(cpu, screen);
-                if !operations.is_empty() {
-                    set_operations.set(operations);
-                }
-            });
+            let screen_state = read_screen_state(cpu);
+            // console_warn(&format!("{:?}", &screen_state));
+            let screen_state = Clamped(&screen_state[..]);
+
+            let image_data =
+                ImageData::new_with_u8_clamped_array_and_sh(screen_state, 32, 32).unwrap();
+
+            let canvas_ctx = canvas_ctx.get().unwrap();
+            canvas_ctx.scale(10.0, 10.0).unwrap();
+            canvas_ctx.put_image_data(&image_data, 0.0, 0.0).unwrap();
         });
 
         set_cpu.update(|cpu| match cpu.run_single_cycle() {
@@ -74,30 +73,24 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    create_effect(move |_| {
-        let operations = operations.get();
-        if !operations.is_empty() {
-            set_screen.update(|screen| {
-                for (index, color) in operations {
-                    screen[index] = color;
-                    let canvas_ctx = canvas_ctx.get_untracked().unwrap();
-                    canvas_ctx.set_fill_style(&JsValue::from_str(&format!(
-                        "#{:X?}{:X?}{:X?}",
-                        color.0, color.1, color.2
-                    )));
-
-                    canvas_ctx.fill_rect(
-                        index as f64 % 32.0,
-                        (index as f64 / 32.0).floor(),
-                        1.0,
-                        1.0,
-                    );
-                }
-            });
-        }
-    });
-
-    // create_effect(move |_| screen);
+    // create_effect(move |_| {
+    //     let operations = operations.get();
+    //     if !operations.is_empty() {
+    //         set_screen.update(|screen| {
+    //             for (index, color) in operations {
+    //                 screen[index] = color;
+    //                 let canvas_ctx = canvas_ctx.get_untracked().unwrap();
+    //                 let color = format!("#{:X?}{:X?}{:X?}", color.0, color.1, color.2);
+    //                 canvas_ctx.set_fill_style(&JsValue::from_str(&color));
+    //
+    //                 let x = index as f64 % 32.0;
+    //                 let y = (index as f64 / 32.0).floor();
+    //                 console_warn(&format!("Filling pixel at {x}:{y} with color {color}"));
+    //                 canvas_ctx.fill_rect(x, y, 1.0, 1.0);
+    //             }
+    //         });
+    //     }
+    // });
 
     let game_loop = use_raf_fn(move |_| run_next_cycle());
     (game_loop.pause)();
@@ -118,6 +111,7 @@ pub fn App() -> impl IntoView {
             _ => return,
         };
         e.prevent_default();
+
         set_cpu.update(|cpu| cpu.mem_write(LAST_PRESSED_BUTTON_ADDRESS.into(), keycode));
         log::debug!(
             "Last pressed button: 0x{:X?}",
@@ -137,29 +131,27 @@ pub fn App() -> impl IntoView {
     }
 }
 
-fn read_screen_state(cpu: &Cpu, screen: &Screen) -> Vec<(usize, (u8, u8, u8))> {
-    // Our display is located between these addresses in memory
+// Screen is 32x32, and has four color channels (rgba) (A will always be 255, but it is required
+// within the canvas api)
+fn read_screen_state(cpu: &Cpu) -> [u8; 32 * 32 * 4] {
+    let mut screen_state = [0; 32 * 32 * 4];
+
+    // Games will place pixels between these two addresses in memory
     (0x0200..0x0600)
         .into_iter()
         .enumerate()
-        .filter_map(|(frame_index, memory_address)| {
+        .for_each(|(frame_index, memory_address)| {
             let color_idx = cpu.mem_read(memory_address as u16);
-            // aX is the color currently displayed in the canvas
-            // bX is the color that was set in memory and that should now be displayed
-            let (a1, a2, a3) = screen[frame_index];
-            let (b1, b2, b3) = color(color_idx);
+            let (r, g, b) = color(color_idx);
 
-            console_warn(&format!(
-                "Comparing #{:X?}{:X?}{:X?} with #{:X?}{:X?}{:X?} ",
-                a1, a2, a3, b1, b2, b3
-            ));
-            if a1 != b1 || a2 != b2 || a3 != b3 {
-                return Some((frame_index, (b1, b2, b3)));
-            }
+            let screen_index = frame_index * 4;
+            screen_state[screen_index] = r;
+            screen_state[screen_index + 1] = g;
+            screen_state[screen_index + 2] = b;
+            screen_state[screen_index + 3] = 255;
+        });
 
-            None
-        })
-        .collect()
+    screen_state
 }
 
 /// Map a NES color id to an rgb sequence

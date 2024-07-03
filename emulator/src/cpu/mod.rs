@@ -138,9 +138,10 @@ impl Cpu {
                     // See https://www.nesdev.org/obelisk-6502-guide/reference.html#JMP for ref
 
                     let indirect_ref = if mem_address & 0x00FF == 0x00FF {
-                        let lo = self.mem_read(mem_address);
-                        let hi = self.mem_read(mem_address & 0xFF00);
-                        (hi as u16) << 8 | (lo as u16)
+                        u16::from_be_bytes([
+                            self.mem_read(mem_address),
+                            self.mem_read(mem_address & 0xFF00),
+                        ])
                     } else {
                         self.mem_read_u16(mem_address)
                     };

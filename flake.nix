@@ -13,17 +13,13 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        cargo-tauri = pkgs.rustPlatform.buildRustPackage rec {
+        # Building cargo-tauri manually since v^2 isn't available on nixpkgs
+        cargo-tauri = pkgs.rustPlatform.buildRustPackage {
           pname = "cargo-tauri";
           version = "2.0.0-beta.22";
           src = cargo-tauri-src;
-
-          # Manually specify the sourceRoot since this crate depends on other crates in the workspace. Relevant info at
-          # https://discourse.nixos.org/t/difficulty-using-buildrustpackage-with-a-src-containing-multiple-cargo-workspaces/10202
           sourceRoot = "source/tooling/cli";
-
           cargoHash = "sha256-JIpQCVxK7+NMCP4rzlynA5yly1Eib9L6cIx8Q7vP7y8=";
-
           buildInputs = [ pkgs.openssl ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs;
             [ glibc libsoup cairo gtk3 webkitgtk ])
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk.frameworks;
@@ -54,11 +50,12 @@
           glib
           gtk3
           libsoup
+          leptosfmt
           webkitgtk_4_1
           librsvg
           rustup
           cargo-tauri
-          trunk # serve web front without running a window
+          trunk # serve web front without running an os window
           hexyl # pretty hex viewer
         ];
       in
@@ -66,11 +63,10 @@
         devShell = pkgs.mkShell {
           buildInputs = packages;
 
-          shellHook =
-            ''
-              export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath libraries}:$LD_LIBRARY_PATH
-              export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS
-            '';
+          shellHook = ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath libraries}
+            export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS
+          '';
         };
       });
 }

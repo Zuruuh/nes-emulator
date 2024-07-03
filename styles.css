@@ -24,15 +24,10 @@ body {
   transform: scale(10);
   transform-origin: bottom;
   background-color: #000;
-  outline: none;
-
-  &:focus {
-    border: .01px solid red;
-  }
 }
 
 #controls {
   display: flex;
   gap: .5rem;
-  margin-top: 1rem;
+  margin-top: 2rem;
 }

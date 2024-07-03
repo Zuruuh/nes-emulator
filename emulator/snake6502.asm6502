@@ -86,7 +86,7 @@ initSnake:
   lda #4   ;start length, put the dec number 4 (the snake is 4 bytes long)
            ;in register A
   sta $03  ;store value of register A at address $03
-  
+
   ;Initial snake head's location's least significant byte to determine
   ;where in a 8x32 strip the head will start. hex $11 is just right
   ;of the center of the first row of a strip
@@ -125,7 +125,7 @@ generateApplePosition:
   ;are kept, resulting in a value between 0 (bin 00000000) and 3 (bin 00000011).
   ;Add 2 to the result, giving a random value between 2 and 5
   and #$03 ;mask out lowest 2 bits
-  clc      ;clear carry flag 
+  clc      ;clear carry flag
   adc #2   ;add to register A, using carry bit for overflow.
   sta $01  ;store value of y coordinate from register A into address $01
 
@@ -160,7 +160,7 @@ readKeys:
 
 upKey:
   lda #4          ;load value 4 into register A, correspoding to the value for DOWN
-  bit $02         ;AND with value at address $02 (the current direction), 
+  bit $02         ;AND with value at address $02 (the current direction),
                   ;setting the zero flag if the result of ANDing the two values
                   ;is 0. So comparing to 4 (bin 0100) only sets zero flag if
                   ;current direction is 4 (DOWN). So for an illegal move (current
@@ -281,7 +281,7 @@ continueCollisionLoop:
                    ;address $03 (snake length).
   beq didntCollide ;if equals, we got to last section with no collision: branch
                    ;to didntCollide
-  
+
   ;ending up here means we haven't checked all snake body segments yet
   jmp snakeCollisionLoop;jump to snakeCollisionLoop to continue the loop
 
@@ -315,7 +315,7 @@ updateloop:
   ;from:  x===
   ;to:    ===
   lda $10,x ;load the value stored at address $10 + x into register A
-  sta $12,x ;store the value of register A into address $12 
+  sta $12,x ;store the value of register A into address $12
             ;plus the value of register X
   dex       ;decrement X, and set negative flag if value becomes negative
   bpl updateloop ;branch to updateLoop if positive (negative flag not set)
@@ -367,13 +367,13 @@ right:
             ;if it's zero, it means we hit the right of the screen
   beq collision ;branch to collision if zero flag is set
   rts       ;return
-down: 
+down:
   lda $10   ;put value from address $10 (the least significant byte, meaning the
             ;position in a 8x32 strip) in register A
   clc       ;clear carry flag
   adc #$20  ;add hex $20 (dec 32) to the value in register A and set the carry flag
             ;if overflow occurs
-  sta $10   ;store the result at address $10 
+  sta $10   ;store the result at address $10
   bcs downdown ;if the carry flag is set, an overflow occurred when adding hex $20 to the
             ;least significant byte of the location of the snake's head, so we need to move
             ;the next 8x3 strip
@@ -450,3 +450,4 @@ spinloop:
 
 
 gameOver: ;game over is literally the end of the program
+
